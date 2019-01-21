@@ -1,106 +1,114 @@
 package main
 
 import (
-    "github.com/racerxdl/go.fifo"
-    "log"
-    "os"
+	"github.com/racerxdl/go.fifo"
+	"os"
+	"sync/atomic"
 )
 
 var decoderFifo = fifo.NewQueue()
 
+var packetCount = atomic.Value{}
+
 func float2byte(v float32) byte {
-    v = v * 127 + 127
-    if v > 255 {
-        v = 255
-    }
 
-    if v < 0 {
-        v = 0
-    }
+	v = v*127 + 127
+	if v > 255 {
+		v = 255
+	}
 
-    return byte(v)
+	if v < 0 {
+		v = 0
+	}
+
+	return byte(v)
 }
 
 func DecodePut(samples []complex64) {
-    decoderFifo.UnsafeLock()
-    for i := 0; i < len(samples); i++ {
-        c := samples[i] // * rotation45 // Rotate 45 degree to align I and Q with bits
-        for i := 0; i < 2; i++ {
-            c = c * rotation90
-        }
-        b0 := float2byte(real(c))
-        b1 := float2byte(imag(c))
+	decoderFifo.UnsafeLock()
+	for i := 0; i < len(samples); i++ {
+		c := samples[i]
+		for i := 0; i < 2; i++ {
+			c = c * rotation90
+		}
+		b0 := float2byte(real(c))
+		b1 := float2byte(imag(c))
 
-        decoderFifo.UnsafeAdd(b1)
-        decoderFifo.UnsafeAdd(b0)
-    }
+		decoderFifo.UnsafeAdd(b0)
+		decoderFifo.UnsafeAdd(b1)
+	}
 
-    TryDecode()
-    decoderFifo.UnsafeUnlock()
+	TryDecode()
+	decoderFifo.UnsafeUnlock()
 }
 
 var of *os.File
 
-var frameBuffer = make([]byte, dvbsFrameBits * 2)
+var frameBuffer = make([]byte, dvbsFrameBits*scanPackets*2)
 
 var defec = MakeDeFEC()
 
 var deinterleaver = MakeDeinterleaver()
 
 func TryDecode() {
+	if decoderFifo.UnsafeLen() < len(frameBuffer) { // Wait to be able to fill buffer
+		return
+	}
 
-    if decoderFifo.UnsafeLen() < len(frameBuffer) { // Wait to be able to fill buffer
-        return
-    }
+	for i := 0; i < len(frameBuffer); i++ {
+		frameBuffer[i] = decoderFifo.UnsafeNext().(byte)
+	}
 
-    for i := 0; i < len(frameBuffer); i++ {
-        frameBuffer[i] = decoderFifo.UnsafeNext().(byte)
-    }
+	defec.PutSoftBits(frameBuffer)
+	_ = defec.TryFindSync()
 
-    defec.PutSoftBits(frameBuffer)
-    _ = defec.TryFindSync()
-
-    if defec.IsLocked() {
-        Decode(defec.GetLockedFrame())
-    }
+	if defec.IsLocked() && defec.IsFrameReady() {
+		Decode(defec.GetLockedFrame())
+	}
 }
 
 func Decode(frame []byte) {
-    // Decode Data
-    if len(frame) != scanPackets * dvbsFrameSize {
-        log.Printf("Expected %d got %d in frame size.\n", scanPackets * dvbsFrameSize, len(frame))
-        return
-    }
 
-    deinterleaver.PutData(frame)
+	f, err := os.OpenFile("tmpfile_raw", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0770)
+	if err != nil {
+		panic(err)
+	}
+	_, err = f.Write(frame)
+	if err != nil {
+		panic(err)
+	}
+	_ = f.Close()
 
-    if deinterleaver.NumStoredFrames() < scanPackets {
-        return
-    }
+	deinterleaver.PutData(frame)
 
-    frames := make([][]byte, scanPackets)
+	if deinterleaver.NumStoredFrames() < scanPackets {
+		return
+	}
 
-    for i := 0; i < scanPackets; i++ {
-        frames[i] = deinterleaver.GetFrame()
-    }
+	frames := make([][]byte, scanPackets)
 
-    // TODO Reed Solomon
+	for i := 0; i < scanPackets; i++ {
+		frames[i] = deinterleaver.GetFrame()
+		packetCount.Store(packetCount.Load().(int) + 1)
+	}
 
-    dvbFrame := make([]byte, mpegtsFrameSize * scanPackets)
+	// TODO Reed Solomon
 
-    for i := 0; i < scanPackets; i++ {
-        copy(dvbFrame[i*mpegtsFrameSize:], frames[i][:mpegtsFrameSize])
-    }
+	dvbFrame := make([]byte, mpegtsFrameSize*scanPackets)
 
-    DeRandomize(dvbFrame)
+	for i := 0; i < scanPackets; i++ {
+		copy(dvbFrame[i*mpegtsFrameSize:], frames[i][:mpegtsFrameSize])
+	}
 
-    f, err := os.OpenFile("tmpfile", os.O_APPEND | os.O_CREATE | os.O_WRONLY, 0770)
-    if err != nil {
-        panic(err)
-    }
-    _, err = f.Write(dvbFrame)
-    if err != nil {
-        panic(err)
-    }
-    _ = f.Close()
+	DeRandomize(dvbFrame)
+
+	f, err = os.OpenFile("tmpfile", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0770)
+	if err != nil {
+		panic(err)
+	}
+	_, err = f.Write(dvbFrame)
+	if err != nil {
+		panic(err)
+	}
+	_ = f.Close()
 }

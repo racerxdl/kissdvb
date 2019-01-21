@@ -1,63 +1,91 @@
 package main
 
-import "github.com/racerxdl/go.fifo"
+import (
+	"github.com/racerxdl/go.fifo"
+	"sync"
+)
+
+// https://www.etsi.org/deliver/etsi_en/300400_300499/300421/01.01.02_60/en_300421v010102p.pdf page 10
 
 type Deinterleaver struct {
-    I int
-    J int
-    buffer []byte
-    frameFifo *fifo.Queue
+	sync.Mutex
+
+	I         int
+	M         int
+	frameFifo *fifo.Queue
+
+	diFifo    []*fifo.Queue
+	comutator int
+	gotSync   bool
+	outBuffer []byte
+	outN      int
 }
 
-
 func MakeDeinterleaver() *Deinterleaver {
-    I := 12
-    J := 17
-    di := &Deinterleaver{
-        I: I,
-        J: J,
-        buffer: make([]byte, 0),
-        frameFifo: fifo.NewQueue(),
-    }
+	I := 12
+	M := 17
 
+	diFifo := make([]*fifo.Queue, I)
 
-    return di
+	for i := 0; i < I; i++ {
+		diFifo[i] = fifo.NewQueue()
+		bi := I - i - 1 // Branch Index, reversed for Interleaver.
+		// Fill with pre-state
+		for z := 0; z < M*bi; z++ { // M * bi Depth, pre-fill
+			diFifo[i].Add(byte(0x00))
+		}
+	}
+
+	di := &Deinterleaver{
+		I:         I,
+		M:         M,
+		frameFifo: fifo.NewQueue(),
+		diFifo:    diFifo,
+		comutator: 0,
+		outBuffer: make([]byte, dvbsFrameSize),
+		outN:      0,
+	}
+
+	return di
 }
 
 func (di *Deinterleaver) PutData(d []byte) {
-    di.buffer = append(di.buffer, d...)
-    di.process()
-}
+	di.Lock()
 
-func (di *Deinterleaver) process() {
-    l := di.J * (di.I-1) * di.I + dvbsFrameSize
-    for len(di.buffer) >= l {
-        out := make([]byte, dvbsFrameSize)
+	for i := 0; i < len(d); i++ {
+		di.diFifo[di.comutator].Add(d[i])
+		b := di.diFifo[di.comutator].Next().(byte)
 
-        delay := di.J * (di.I - 1)
+		if b == 0x47 || b == 0xb8 { // Wait for first sync to start the DeInterleaver
+			di.gotSync = true
+		}
 
-        for i := 0; i < dvbsFrameSize; i++ {
-            pos :=  di.J * (di.I-1) * di.I // Base position
-            pos += i // offset
-            pos -= delay * di.I // Line delay
+		if di.gotSync {
+			di.outBuffer[di.outN] = b
+			di.outN++
 
-            out[i] = di.buffer[pos]
+			if di.outN == dvbsFrameSize {
+				di.outN = 0
+				di.frameFifo.Add(di.outBuffer)
+				di.outBuffer = make([]byte, dvbsFrameSize)
+			}
+		}
 
-            delay = (delay - di.J + di.J * di.I) % ( di.J * di.I)
-        }
+		// Move comutator
+		di.comutator += 1
+		di.comutator %= di.I
+	}
 
-        di.frameFifo.Add(out)
-        di.buffer = di.buffer[dvbsFrameSize:]
-    }
+	di.Unlock()
 }
 
 func (di *Deinterleaver) NumStoredFrames() int {
-    return di.frameFifo.Len()
+	return di.frameFifo.Len()
 }
 
 func (di *Deinterleaver) GetFrame() []byte {
-    if di.frameFifo.Len() > 0 {
-        return di.frameFifo.Next().([]byte)
-    }
-    return nil
+	if di.frameFifo.Len() > 0 {
+		return di.frameFifo.Next().([]byte)
+	}
+	return nil
 }
