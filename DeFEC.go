@@ -149,6 +149,20 @@ func (fec *DeFEC) UpdateOut() bool {
 	return true
 }
 
+// Not working, not sure why
+//func (fec *DeFEC) UpdateLockedFrame() {
+//	if fec.lockedFrame != 0 {
+//		// Re-add everything to extra bits
+//		fec.extraBits = append(fec.encodedBuffer[:fec.encodedBufferPos], fec.extraBits...)
+//		fec.encodedBufferPos = 0
+//		// Rotate
+//		rotateSoftBuffer(fec.extraBits, fec.lockedFrame, int(fec.lockedFrame/4) > 0)
+//		// Re-add everything
+//		fec.addBitsToBuffer()
+//		fec.lockedFrame = 0
+//	}
+//}
+
 func (fec *DeFEC) TryFindSync() int {
 	for fec.UpdateOut() {
 		dvbSync := fec.syncPresent()

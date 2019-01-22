@@ -1,11 +1,14 @@
 package main
 
 import (
+	"github.com/racerxdl/gorrect/Codes"
 	"github.com/racerxdl/segdsp/tools"
 	"log"
 	"math"
 )
 
+const reedSolomonPoly = Codes.ReedSolomonPrimitivePolynomial8_4_3_2_0
+const reedSolomonDistance = 8
 const mpegtsFrameSize = 188
 const dvbsFrameSize = 204
 const dvbsFrameBits = dvbsFrameSize * 8

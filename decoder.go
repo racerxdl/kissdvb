@@ -3,8 +3,8 @@ package main
 import (
 	"github.com/racerxdl/go.fifo"
 	"github.com/racerxdl/gorrect"
-	"github.com/racerxdl/gorrect/Codes"
 	"os"
+	"sync"
 	"sync/atomic"
 )
 
@@ -12,6 +12,11 @@ var decoderFifo = fifo.NewQueue()
 
 var packetCount = atomic.Value{}
 var rsErrors = atomic.Value{}
+
+var currentRotationN = 0
+var currentRotation = complex64(1)
+var invertedIq = false
+var rotationLock = sync.Mutex{}
 
 func float2byte(v float32) byte {
 
@@ -29,20 +34,41 @@ func float2byte(v float32) byte {
 
 func DecodePut(samples []complex64) {
 	decoderFifo.UnsafeLock()
+	rotationLock.Lock()
 	for i := 0; i < len(samples); i++ {
 		c := samples[i]
-		for i := 0; i < 2; i++ {
-			c = c * rotation90
-		}
+		c *= currentRotation
 		b0 := float2byte(real(c))
 		b1 := float2byte(imag(c))
 
-		decoderFifo.UnsafeAdd(b0)
-		decoderFifo.UnsafeAdd(b1)
+		if !invertedIq {
+			decoderFifo.UnsafeAdd(b0)
+			decoderFifo.UnsafeAdd(b1)
+		} else {
+			decoderFifo.UnsafeAdd(b1)
+			decoderFifo.UnsafeAdd(b0)
+		}
 	}
+	rotationLock.Unlock()
 
 	TryDecode()
 	decoderFifo.UnsafeUnlock()
+}
+
+func UpdateCurrentRotation(rot int, conj bool) {
+	rotationLock.Lock()
+	baseRotation := rot % 4
+	currentRotation = complex64(1)
+
+	if baseRotation != 0 {
+		for i := 0; i < 4-baseRotation; i++ {
+			currentRotation *= rotation90
+		}
+	}
+
+	invertedIq = conj
+	currentRotationN = rot
+	rotationLock.Unlock()
 }
 
 var frameBuffer = make([]byte, dvbsFrameBits*scanPackets*2)
@@ -51,7 +77,9 @@ var defec = MakeDeFEC()
 
 var deinterleaver = MakeDeinterleaver()
 
-var rs = gorrect.MakeReedSolomon(204, 188, 8, Codes.ReedSolomonPrimitivePolynomial8_4_3_2_0)
+var rs = gorrect.MakeReedSolomon(dvbsFrameSize, mpegtsFrameSize, reedSolomonDistance, reedSolomonPoly)
+
+var mpegtsFrameFifo = fifo.NewQueue()
 
 func TryDecode() {
 	if decoderFifo.UnsafeLen() < len(frameBuffer) { // Wait to be able to fill buffer
@@ -63,10 +91,19 @@ func TryDecode() {
 	}
 
 	defec.PutSoftBits(frameBuffer)
-	_ = defec.TryFindSync()
+	rot := defec.TryFindSync()
 
 	if defec.IsLocked() && defec.IsFrameReady() {
 		Decode(defec.GetLockedFrame())
+	}
+
+	if rot != -1 && rot != currentRotationN {
+		// TODO: Not working, not sure why
+		//conjugated := rot / 4 > 0
+		//fmt.Printf("New rotation: %d (was %d)\n", rot, currentRotationN)
+		//UpdateCurrentRotation(rot, conjugated)
+		//
+		//defec.UpdateLockedFrame()
 	}
 }
 
@@ -97,6 +134,11 @@ func Decode(frame []byte) {
 	rsErrors.Store(rserrors)
 
 	DeRandomize(dvbFrame)
+
+	// TODO: Fifo to video decoder
+	//for i := 0; i < scanPackets; i++ {
+	//	mpegtsFrameFifo.Add(dvbFrame[i*mpegtsFrameSize : (i+1)*mpegtsFrameSize])
+	//}
 
 	f, err := os.OpenFile("tmpfile", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0770)
 	if err != nil {

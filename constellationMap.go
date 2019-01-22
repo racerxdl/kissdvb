@@ -1,10 +1,15 @@
 package main
 
+import "fmt"
+
 func f2bSoft(v float32) byte {
 	return byte(v + 127)
 }
 
 func rotateSoftBuffer(buffer []byte, n int, conj bool) {
+	if len(buffer)%2 > 0 {
+		fmt.Println("WARN: Non even buffer!!")
+	}
 	for i := 0; i < len(buffer)/2; i++ {
 		// Sync Word
 		b0 := int(buffer[i*2]) - 127
