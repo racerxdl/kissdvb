@@ -44,16 +44,6 @@ func init() {
 
 var displayData = make([]complex64, 1024)
 
-func inBounds(v float32) float32 {
-	if v > 127 {
-		return 127
-	} else if v < -128 {
-		return -128
-	}
-
-	return v
-}
-
 func drawCircle(x0, y0, radius int, img *image.RGBA, c color.Color) {
 	x := radius - 1
 	y := 0
@@ -111,6 +101,7 @@ func UpdateConstellation() {
 
 	gc.SetFillColor(color.Black)
 	gc.Clear()
+	gc.Save()
 
 	for i := 0; i < len(displayData); i++ {
 		c := displayData[i]
@@ -124,8 +115,11 @@ func UpdateConstellation() {
 		}
 	}
 
+	gc.Restore()
 	gc.SetFillColor(color.White)
-	gc.FillStringAt(fmt.Sprintf("BER: %04d Packets: %09d", defec.GetBER(), packetCount.Load().(int)), 10, 245)
+	gc.SetFontSize(10)
+	gc.FillStringAt(fmt.Sprintf("RS: %02d", rsErrors.Load().(int)), 10, 235)
+	gc.FillStringAt(fmt.Sprintf("BER: %04d Packets: %06d", defec.GetBER(), packetCount.Load().(int)), 10, 250)
 
 	isUpdated = true
 	drawLock.Unlock()
@@ -153,7 +147,6 @@ func InitializeFonts() {
 	if err != nil {
 		panic(err)
 	}
-
 	draw2d.RegisterFont(draw2d.FontData{
 		Name:   "FreeMono",
 		Family: draw2d.FontFamilyMono,
@@ -165,6 +158,23 @@ func InitializeFonts() {
 		Family: draw2d.FontFamilyMono,
 		Style:  draw2d.FontStyleNormal,
 	})
+
+	loadedFont, err = truetype.Parse(freeSansBytes)
+	if err != nil {
+		panic(err)
+	}
+	draw2d.RegisterFont(draw2d.FontData{
+		Name:   "FreeSans",
+		Family: draw2d.FontFamilySans,
+		Style:  draw2d.FontStyleNormal,
+	}, loadedFont)
+
+	gc.SetFontData(draw2d.FontData{
+		Name:   "FreeSans",
+		Family: draw2d.FontFamilySans,
+		Style:  draw2d.FontStyleNormal,
+	})
+
 }
 
 func rgbaTex(tex int32, rgba *image.RGBA) (nk.Image, int32) {

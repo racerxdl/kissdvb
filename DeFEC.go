@@ -7,6 +7,9 @@ import (
 	"sync"
 )
 
+const numLastFrameBits = 32
+const numLastFrameBitsInBytes = numLastFrameBits / 8
+
 type DeFEC struct {
 	sync.Mutex
 	viterbi27        SatHelper.Viterbi27
@@ -24,23 +27,26 @@ type DeFEC struct {
 }
 
 func MakeDeFEC() *DeFEC {
-	encodedSize := scanBits
-	viterbiSize := encodedSize // + 6
-	viterbi := SatHelper.NewViterbi27(viterbiSize)
+	encodedSize := (scanBits + numLastFrameBits) * 2
+	viterbi := SatHelper.NewViterbi27(encodedSize / 2)
 	decodedBuffer := make([][]byte, 8)
 
 	for i := 0; i < 8; i++ {
 		decodedBuffer[i] = make([]byte, viterbi.DecodedSize())
 	}
 
-	encodedSize = viterbi.EncodedSize()
+	encodedBuffer := make([]byte, encodedSize)
+
+	for i := 0; i < encodedSize; i++ {
+		encodedBuffer[i] = 127
+	}
 
 	return &DeFEC{
 		encodedSize:      encodedSize,
-		viterbi27:        viterbi, // Start with two frames
-		encodedBuffer:    make([]byte, encodedSize),
+		viterbi27:        viterbi,
+		encodedBuffer:    encodedBuffer,
 		decodedBuffer:    decodedBuffer,
-		encodedBufferPos: 0,
+		encodedBufferPos: numLastFrameBits * 2,
 		extraBits:        make([]byte, 0),
 		tmpBuffer:        make([]byte, encodedSize),
 		lock:             false,
@@ -65,11 +71,15 @@ func (fec *DeFEC) shiftNBits(n int) {
 	}
 
 	fec.Lock()
+
 	if fec.encodedBufferPos > n {
 		copy(fec.encodedBuffer, fec.encodedBuffer[n:])
 		fec.encodedBufferPos -= n
 	} else {
-		fec.encodedBufferPos = 0
+		fec.encodedBufferPos = numLastFrameBits * 2
+		for i := 0; i < numLastFrameBits*2; i++ {
+			fec.encodedBuffer[i] = 127
+		}
 	}
 
 	fec.addBitsToBuffer()
@@ -91,6 +101,10 @@ func (fec *DeFEC) addBitsToBuffer() {
 	}
 }
 
+func (fec *DeFEC) fillTmpBuffer() {
+	copy(fec.tmpBuffer, fec.encodedBuffer)
+}
+
 func (fec *DeFEC) UpdateOut() bool {
 	fec.Lock()
 	defer fec.Unlock()
@@ -104,7 +118,7 @@ func (fec *DeFEC) UpdateOut() bool {
 	}
 
 	if fec.lock { // We had already locked last frame, let's just retry that
-		copy(fec.tmpBuffer, fec.encodedBuffer)
+		fec.fillTmpBuffer()
 		i := fec.lockedFrame
 		if i > 0 {
 			rotateSoftBuffer(fec.tmpBuffer, i, int(i/4) > 0)
@@ -122,7 +136,7 @@ func (fec *DeFEC) UpdateOut() bool {
 	if !fec.lock {
 		// Do all rotation decode
 		for i := 0; i < 8; i++ {
-			copy(fec.tmpBuffer, fec.encodedBuffer)
+			fec.fillTmpBuffer()
 			// Rotate
 			if i > 0 {
 				rotateSoftBuffer(fec.tmpBuffer, i, int(i/4) > 0)
@@ -155,12 +169,18 @@ func (fec *DeFEC) TryFindSync() int {
 	return -1
 }
 
+func (fec *DeFEC) fillLastBits() {
+	// Shift the end to start
+	copy(fec.encodedBuffer[:numLastFrameBits*2], fec.encodedBuffer[fec.encodedSize-numLastFrameBits*2:])
+}
+
 func (fec *DeFEC) ResetBuffer() {
-	fec.encodedBufferPos = 0 // Reset encoded buffer
+	fec.encodedBufferPos = numLastFrameBits * 2 // Reset encoded buffer
+	fec.fillLastBits()
 }
 
 func (fec *DeFEC) syncPresentN(n int) bool {
-	buff := fec.decodedBuffer[n]
+	buff := fec.decodedBuffer[n][numLastFrameBitsInBytes:]
 
 	// Soft Sync Present
 
@@ -191,7 +211,7 @@ func (fec *DeFEC) GetLockedFrame() []byte {
 
 	if fec.lock && fec.frameReady {
 		fec.frameReady = false
-		return fec.decodedBuffer[fec.lockedFrame]
+		return fec.decodedBuffer[fec.lockedFrame][numLastFrameBitsInBytes:]
 	}
 
 	return nil
@@ -210,7 +230,11 @@ func (fec *DeFEC) GetBER() int {
 	defer fec.Unlock()
 
 	if fec.lock {
-		return fec.bitErrors[fec.lockedFrame]
+		e := fec.bitErrors[fec.lockedFrame] - numLastFrameBits
+		if e < 0 {
+			return 0
+		}
+		return e
 	}
 
 	return -1

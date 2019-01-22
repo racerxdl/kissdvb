@@ -92,6 +92,7 @@ func sampleLoop(data []complex64) {
 }
 
 func main() {
+	rsErrors.Store(int(0))
 	packetCount.Store(int(0))
 	frontend := CFileFrontend.NewCFileFrontend("/media/ELTN/Baseband Records/DVB-S/dvbs-2e6.cfile")
 	frontend.SetSampleRate(2e6)
@@ -140,14 +141,11 @@ func main() {
 	exitC := make(chan os.Signal, 1)
 	doneC := make(chan struct{}, 1)
 
-	of, _ = os.Create("test.bin")
-
 	signal.Notify(exitC, os.Interrupt, syscall.SIGTERM)
 
 	go func() {
 		<-exitC
 		log.Println("Got SIGTERM!")
-		_ = of.Close()
 		frontend.Stop()
 		win.SetShouldClose(true)
 		<-doneC

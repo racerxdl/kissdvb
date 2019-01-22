@@ -2,6 +2,8 @@ package main
 
 import (
 	"github.com/racerxdl/go.fifo"
+	"github.com/racerxdl/gorrect"
+	"github.com/racerxdl/gorrect/Codes"
 	"os"
 	"sync/atomic"
 )
@@ -9,6 +11,7 @@ import (
 var decoderFifo = fifo.NewQueue()
 
 var packetCount = atomic.Value{}
+var rsErrors = atomic.Value{}
 
 func float2byte(v float32) byte {
 
@@ -42,13 +45,13 @@ func DecodePut(samples []complex64) {
 	decoderFifo.UnsafeUnlock()
 }
 
-var of *os.File
-
 var frameBuffer = make([]byte, dvbsFrameBits*scanPackets*2)
 
 var defec = MakeDeFEC()
 
 var deinterleaver = MakeDeinterleaver()
+
+var rs = gorrect.MakeReedSolomon(204, 188, 8, Codes.ReedSolomonPrimitivePolynomial8_4_3_2_0)
 
 func TryDecode() {
 	if decoderFifo.UnsafeLen() < len(frameBuffer) { // Wait to be able to fill buffer
@@ -68,17 +71,6 @@ func TryDecode() {
 }
 
 func Decode(frame []byte) {
-
-	f, err := os.OpenFile("tmpfile_raw", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0770)
-	if err != nil {
-		panic(err)
-	}
-	_, err = f.Write(frame)
-	if err != nil {
-		panic(err)
-	}
-	_ = f.Close()
-
 	deinterleaver.PutData(frame)
 
 	if deinterleaver.NumStoredFrames() < scanPackets {
@@ -92,17 +84,21 @@ func Decode(frame []byte) {
 		packetCount.Store(packetCount.Load().(int) + 1)
 	}
 
-	// TODO Reed Solomon
-
 	dvbFrame := make([]byte, mpegtsFrameSize*scanPackets)
 
+	rserrors := 0
+
 	for i := 0; i < scanPackets; i++ {
-		copy(dvbFrame[i*mpegtsFrameSize:], frames[i][:mpegtsFrameSize])
+		decoded, errors := rs.Decode(frames[i])
+		copy(dvbFrame[i*mpegtsFrameSize:], decoded)
+		rserrors += errors
 	}
+
+	rsErrors.Store(rserrors)
 
 	DeRandomize(dvbFrame)
 
-	f, err = os.OpenFile("tmpfile", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0770)
+	f, err := os.OpenFile("tmpfile", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0770)
 	if err != nil {
 		panic(err)
 	}
