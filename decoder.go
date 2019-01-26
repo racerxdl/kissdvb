@@ -3,7 +3,6 @@ package main
 import (
 	"github.com/racerxdl/go.fifo"
 	"github.com/racerxdl/gorrect"
-	"os"
 	"sync"
 	"sync/atomic"
 )
@@ -79,8 +78,6 @@ var deinterleaver = MakeDeinterleaver()
 
 var rs = gorrect.MakeReedSolomon(dvbsFrameSize, mpegtsFrameSize, reedSolomonDistance, reedSolomonPoly)
 
-var mpegtsFrameFifo = fifo.NewQueue()
-
 func TryDecode() {
 	if decoderFifo.UnsafeLen() < len(frameBuffer) { // Wait to be able to fill buffer
 		return
@@ -135,18 +132,7 @@ func Decode(frame []byte) {
 
 	DeRandomize(dvbFrame)
 
-	// TODO: Fifo to video decoder
-	//for i := 0; i < scanPackets; i++ {
-	//	mpegtsFrameFifo.Add(dvbFrame[i*mpegtsFrameSize : (i+1)*mpegtsFrameSize])
-	//}
-
-	f, err := os.OpenFile("tmpfile", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0770)
-	if err != nil {
-		panic(err)
+	for i := 0; i < scanPackets; i++ {
+		videoPlayer.PutTSFrame(dvbFrame[i*mpegtsFrameSize : (i+1)*mpegtsFrameSize])
 	}
-	_, err = f.Write(dvbFrame)
-	if err != nil {
-		panic(err)
-	}
-	_ = f.Close()
 }

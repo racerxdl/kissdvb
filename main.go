@@ -33,6 +33,8 @@ var buffer1 []complex64
 
 var mmOld SatHelper.ClockRecovery
 
+var videoPlayer = MakeVideoPlayer()
+
 func checkAndResizeBuffers(length int) {
 	if len(buffer0) < length {
 		buffer0 = make([]complex64, length)
@@ -159,6 +161,7 @@ func main() {
 	nk.NkStyleSetFont(ctx, fonts["sans16"].Handle())
 
 	frontend.Start()
+	videoPlayer.Start()
 
 	for {
 		select {

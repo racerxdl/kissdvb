@@ -19,11 +19,13 @@ var drawLock = sync.Mutex{}
 var constellationImage = image.NewRGBA(image.Rect(0, 0, 256, 256))
 var gc = draw2dimg.NewGraphicContext(constellationImage)
 var constellationFrame nk.Image
-var constellationTex int32
+var constellationTex int32 = -1
 var isUpdated bool
 var monoAtlas *nk.FontAtlas
 var sansAtlas *nk.FontAtlas
 var fonts = make(map[string]*nk.Font)
+var videoFrameNK nk.Image
+var videoTexture int32 = -1
 
 const (
 	winWidth  = 1280
@@ -212,6 +214,23 @@ func DrawConstellation(win *glfw.Window, ctx *nk.Context) {
 	nk.NkEnd(ctx)
 }
 
+func DrawVideoFrame(win *glfw.Window, ctx *nk.Context) {
+	width, height := win.GetSize()
+	bounds := nk.NkRect(0, 256, float32(width), float32(height)-256)
+	update := nk.NkBegin(ctx, "Video", bounds, 0)
+	if update > 0 {
+		if videoPlayer.IsFrameReady() {
+			videoFrameNK, videoTexture = rgbaTex(videoTexture, videoPlayer.GetFrame())
+			isUpdated = false
+		}
+		nk.NkLayoutRowStatic(ctx, float32(videoPlayer.Height()), int32(videoPlayer.Width()), 1)
+		{
+			nk.NkImage(ctx, videoFrameNK)
+		}
+	}
+	nk.NkEnd(ctx)
+}
+
 func gfxMain(win *glfw.Window, ctx *nk.Context) {
 	drawLock.Lock()
 	defer drawLock.Unlock()
@@ -219,6 +238,7 @@ func gfxMain(win *glfw.Window, ctx *nk.Context) {
 	nk.NkPlatformNewFrame()
 
 	DrawConstellation(win, ctx)
+	DrawVideoFrame(win, ctx)
 
 	// Render
 	// 28, 48, 62, 255
