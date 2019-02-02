@@ -16,6 +16,13 @@ func MakeFifoReader() *FifoReader {
 	}
 }
 
+func (fr *FifoReader) Len() int {
+	fr.cond.L.Lock()
+	defer fr.cond.L.Unlock()
+
+	return len(fr.internalBuffer)
+}
+
 func (fr *FifoReader) Read(p []byte) (n int, err error) {
 	fr.cond.L.Lock()
 	// Wait until enough data is available

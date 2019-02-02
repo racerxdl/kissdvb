@@ -16,6 +16,8 @@ const (
 	StreamTypeAudio = 0x0F
 )
 
+const MinProbeLength = 128 * 1024 // 1 MB
+
 func init() {
 	err := portaudio.Initialize()
 	if err != nil {
@@ -191,6 +193,10 @@ func (vp *VideoPlayer) decodeRoutine() {
 	dmx := astits.New(ctx, vp.fifoReader)
 
 	for {
+		if vp.fifoReader.Len() < MinProbeLength {
+			time.Sleep(time.Microsecond)
+			continue
+		}
 		// Get the next data
 		d, err := dmx.NextData()
 

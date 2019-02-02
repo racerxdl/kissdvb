@@ -1,20 +1,17 @@
 package main
 
 import (
+	"fmt"
 	"github.com/racerxdl/go.fifo"
 	"github.com/racerxdl/gorrect"
+	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 )
-
-var decoderFifo = fifo.NewQueue()
 
 var packetCount = atomic.Value{}
 var rsErrors = atomic.Value{}
-
-var currentRotationN = 0
-var currentRotation = complex64(1)
-var invertedIq = false
 var rotationLock = sync.Mutex{}
 
 func float2byte(v float32) byte {
@@ -31,78 +28,67 @@ func float2byte(v float32) byte {
 	return byte(v)
 }
 
+var lastBufferSize int32 = 64 * 1024
+var decoderFifo = fifo.NewQueue()
+
+var reusableBuffer = sync.Pool{
+	New: func() interface{} {
+		size := atomic.LoadInt32(&lastBufferSize)
+		return make([]byte, size)
+	},
+}
+
 func DecodePut(samples []complex64) {
-	decoderFifo.UnsafeLock()
 	rotationLock.Lock()
+
+	data := reusableBuffer.Get().([]byte)
+
+	if len(data) < len(samples)*2 {
+		fmt.Printf("Not enough bytes in reusableBuffer. Need %d got %d\n", len(samples)*2, len(data))
+		atomic.StoreInt32(&lastBufferSize, int32(len(samples)*2))
+		data = make([]byte, len(samples)*2)
+	}
+
 	for i := 0; i < len(samples); i++ {
 		c := samples[i]
-		c *= currentRotation
 		b0 := float2byte(real(c))
 		b1 := float2byte(imag(c))
 
-		if !invertedIq {
-			decoderFifo.UnsafeAdd(b0)
-			decoderFifo.UnsafeAdd(b1)
-		} else {
-			decoderFifo.UnsafeAdd(b1)
-			decoderFifo.UnsafeAdd(b0)
-		}
-	}
-	rotationLock.Unlock()
-
-	TryDecode()
-	decoderFifo.UnsafeUnlock()
-}
-
-func UpdateCurrentRotation(rot int, conj bool) {
-	rotationLock.Lock()
-	baseRotation := rot % 4
-	currentRotation = complex64(1)
-
-	if baseRotation != 0 {
-		for i := 0; i < 4-baseRotation; i++ {
-			currentRotation *= rotation90
-		}
+		data[i*2] = b0
+		data[i*2+1] = b1
 	}
 
-	invertedIq = conj
-	currentRotationN = rot
+	decoderFifo.Add(data[:len(samples)*2])
 	rotationLock.Unlock()
 }
 
-var frameBuffer = make([]byte, dvbsFrameBits*scanPackets*2)
+func DecodeLoop() {
+	for {
+		for decoderFifo.Len() > 0 {
+			buffer := decoderFifo.Next().([]byte)
+			defec.PutSoftBits(buffer)
+			size := atomic.LoadInt32(&lastBufferSize)
+
+			if int32(len(buffer)) >= size {
+				reusableBuffer.Put(buffer)
+			}
+
+			_ = defec.TryFindSync()
+
+			if defec.IsLocked() && defec.IsFrameReady() {
+				Decode(defec.GetLockedFrame())
+			}
+		}
+		time.Sleep(time.Microsecond)
+		runtime.Gosched()
+	}
+}
 
 var defec = MakeDeFEC()
 
 var deinterleaver = MakeDeinterleaver()
 
 var rs = gorrect.MakeReedSolomon(dvbsFrameSize, mpegtsFrameSize, reedSolomonDistance, reedSolomonPoly)
-
-func TryDecode() {
-	if decoderFifo.UnsafeLen() < len(frameBuffer) { // Wait to be able to fill buffer
-		return
-	}
-
-	for i := 0; i < len(frameBuffer); i++ {
-		frameBuffer[i] = decoderFifo.UnsafeNext().(byte)
-	}
-
-	defec.PutSoftBits(frameBuffer)
-	rot := defec.TryFindSync()
-
-	if defec.IsLocked() && defec.IsFrameReady() {
-		Decode(defec.GetLockedFrame())
-	}
-
-	if rot != -1 && rot != currentRotationN {
-		// TODO: Not working, not sure why
-		//conjugated := rot / 4 > 0
-		//fmt.Printf("New rotation: %d (was %d)\n", rot, currentRotationN)
-		//UpdateCurrentRotation(rot, conjugated)
-		//
-		//defec.UpdateLockedFrame()
-	}
-}
 
 func Decode(frame []byte) {
 	deinterleaver.PutData(frame)

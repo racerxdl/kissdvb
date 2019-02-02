@@ -103,7 +103,7 @@ func main() {
 	symbolRate := 1e6
 	sps := sampleRate / symbolRate
 
-	rrcTaps := dsp.MakeRRC(1, sampleRate, symbolRate, 0.35, 31)
+	rrcTaps := dsp.MakeRRC(1, sampleRate, symbolRate, 0.35, 15)
 	filter = dsp.MakeFirFilter(rrcTaps)
 	costasNew = dsp.MakeCostasLoop4(PllAlpha)
 
@@ -162,6 +162,8 @@ func main() {
 
 	frontend.Start()
 	videoPlayer.Start()
+
+	go DecodeLoop()
 
 	for {
 		select {

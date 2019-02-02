@@ -29,7 +29,7 @@ var videoTexture int32 = -1
 
 const (
 	winWidth  = 1280
-	winHeight = 720
+	winHeight = 900
 
 	maxVertexBuffer  = 512 * 1024
 	maxElementBuffer = 128 * 1024
