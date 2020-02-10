@@ -1,14 +1,6 @@
 package main
 
 import (
-	"github.com/OpenSatelliteProject/libsathelper"
-	"github.com/go-gl/gl/v3.2-core/gl"
-	"github.com/go-gl/glfw/v3.2/glfw"
-	"github.com/golang-ui/nuklear/nk"
-	"github.com/racerxdl/go.fifo"
-	"github.com/racerxdl/kissdvb/Frontend"
-	"github.com/racerxdl/kissdvb/Frontend/CFileFrontend"
-	"github.com/racerxdl/segdsp/dsp"
 	"log"
 	"os"
 	"os/signal"
@@ -16,6 +8,15 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	SatHelper "github.com/OpenSatelliteProject/libsathelper"
+	"github.com/go-gl/gl/v3.2-core/gl"
+	"github.com/go-gl/glfw/v3.2/glfw"
+	"github.com/golang-ui/nuklear/nk"
+	fifo "github.com/racerxdl/go.fifo"
+	"github.com/racerxdl/kissdvb/Frontend"
+	"github.com/racerxdl/kissdvb/Frontend/CFileFrontend"
+	"github.com/racerxdl/segdsp/dsp"
 )
 
 const PllAlpha float32 = 0.0001
@@ -76,14 +77,12 @@ func sampleLoop(data []complex64) {
 	s = mmOld.Work(&ba[0], &bb[0], s)
 	swapBuffers(&ba, &bb)
 
-	constellationSymbolFifo.UnsafeLock()
 	for i := 0; i < s; i++ {
-		if constellationSymbolFifo.UnsafeLen() > 2048 {
+		if constellationSymbolFifo.Len() > 2048 {
 			break
 		}
-		constellationSymbolFifo.UnsafeAdd(ba[i])
+		constellationSymbolFifo.Add(ba[i])
 	}
-	constellationSymbolFifo.UnsafeUnlock()
 
 	if time.Since(lastConstellationUpdate) > time.Millisecond*10 && constellationSymbolFifo.Len() >= 1024 {
 		go UpdateConstellation()

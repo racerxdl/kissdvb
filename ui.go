@@ -2,16 +2,17 @@ package main
 
 import (
 	"fmt"
+	"image"
+	"image/color"
+	"sync"
+	"unsafe"
+
 	"github.com/go-gl/gl/v3.2-core/gl"
 	"github.com/go-gl/glfw/v3.2/glfw"
 	"github.com/golang-ui/nuklear/nk"
 	"github.com/golang/freetype/truetype"
 	"github.com/llgcode/draw2d"
 	"github.com/llgcode/draw2d/draw2dimg"
-	"image"
-	"image/color"
-	"sync"
-	"unsafe"
 )
 
 var drawLock = sync.Mutex{}
@@ -94,11 +95,9 @@ func drawDot(xm, ym int, img *image.RGBA, c color.Color) {
 }
 
 func UpdateConstellation() {
-	constellationSymbolFifo.UnsafeLock()
 	for i := 0; i < len(displayData); i++ {
-		displayData[i] = constellationSymbolFifo.UnsafeNext().(complex64)
+		displayData[i] = constellationSymbolFifo.Next().(complex64)
 	}
-	constellationSymbolFifo.UnsafeUnlock()
 	drawLock.Lock()
 
 	gc.SetFillColor(color.Black)
